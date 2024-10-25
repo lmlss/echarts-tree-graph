@@ -95,10 +95,26 @@ function commonLayout(seriesModel: TreeSeriesModel, api: ExtensionAPI) {
         if (layout === 'radial') {
             kx = width / (right.getLayout().x + delta + tx);
             // here we use (node.depth - 1), bucause the real root's depth is 1
-            ky = height / ((bottom.depth - 1) || 1);
+            // ky = height / ((bottom.depth - 1) || 1);
+            ky = 100;
+
             eachBefore(realRoot, function (node) {
                 coorX = (node.getLayout().x + tx) * kx;
-                coorY = (node.depth - 1) * ky;
+                // coorY = (node.depth - 1) * ky;
+
+                if(node.depth ===  1) {
+                    coorY = 0
+                  }
+                if(node.depth ===  2) {
+                  coorY = 130
+                }
+                if(node.depth ===  3) {
+                  coorY = 260
+                }
+                if(node.depth > 3) {
+                  coorY = 260 + 60 * (node.depth - 2)
+                }
+
                 const finalCoor = radialCoordinate(coorX, coorY);
                 node.setLayout({x: finalCoor.x, y: finalCoor.y, rawX: coorX, rawY: coorY}, true);
             });
