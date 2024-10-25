@@ -24343,6 +24343,9 @@
       legend: {
         textStyle: {
           color: contrastColor
+        },
+        pageTextStyle: {
+          color: contrastColor
         }
       },
       textStyle: {
@@ -32533,7 +32536,7 @@
     barWidthAndOffset) {
       // Get Axis Length
       var axisExtent = model.axis.getExtent();
-      var axisLength = axisExtent[1] - axisExtent[0];
+      var axisLength = Math.abs(axisExtent[1] - axisExtent[0]);
       // Get bars on current base axis and calculate min and max overflow
       var barsOnCurrentAxis = retrieveColumnLayout(barWidthAndOffset, model.axis);
       if (barsOnCurrentAxis === undefined) {
@@ -33372,8 +33375,13 @@
       var custom = axis.getLabelModel().get('customValues');
       if (custom) {
         var labelFormatter_1 = makeLabelFormatter(axis);
+        var extent_1 = axis.scale.getExtent();
+        var tickNumbers = tickValuesToNumbers(axis, custom);
+        var ticks = filter(tickNumbers, function (val) {
+          return val >= extent_1[0] && val <= extent_1[1];
+        });
         return {
-          labels: tickValuesToNumbers(axis, custom).map(function (numval) {
+          labels: map(ticks, function (numval) {
             var tick = {
               value: numval
             };
@@ -33399,8 +33407,12 @@
     function createAxisTicks(axis, tickModel) {
       var custom = axis.getTickModel().get('customValues');
       if (custom) {
+        var extent_2 = axis.scale.getExtent();
+        var tickNumbers = tickValuesToNumbers(axis, custom);
         return {
-          ticks: tickValuesToNumbers(axis, custom)
+          ticks: filter(tickNumbers, function (val) {
+            return val >= extent_2[0] && val <= extent_2[1];
+          })
         };
       }
       // Only ordinal scale support tick interval
@@ -33857,7 +33869,8 @@
       if (ticksLen === 1) {
         ticksCoords[0].coord = axisExtent[0];
         last = ticksCoords[1] = {
-          coord: axisExtent[1]
+          coord: axisExtent[1],
+          tickValue: ticksCoords[0].tickValue
         };
       } else {
         var crossLen = ticksCoords[ticksLen - 1].tickValue - ticksCoords[0].tickValue;
@@ -33868,7 +33881,8 @@
         var dataExtent = axis.scale.getExtent();
         diffSize = 1 + dataExtent[1] - ticksCoords[ticksLen - 1].tickValue;
         last = {
-          coord: ticksCoords[ticksLen - 1].coord + shift_1 * diffSize
+          coord: ticksCoords[ticksLen - 1].coord + shift_1 * diffSize,
+          tickValue: dataExtent[1] + 1
         };
         ticksCoords.push(last);
       }
@@ -38690,7 +38704,7 @@
       var y = rect.y;
       var width = rect.width;
       var height = rect.height;
-      var lineWidth = seriesModel.get(['lineStyle', 'width']) || 2;
+      var lineWidth = seriesModel.get(['lineStyle', 'width']) || 0;
       // Expand the clip path a bit to avoid the border is clipped and looks thinner
       x -= lineWidth / 2;
       y -= lineWidth / 2;
@@ -39239,9 +39253,9 @@
         this.group.add(symbolDraw.group);
         this._symbolDraw = symbolDraw;
         this._lineGroup = lineGroup;
+        this._changePolyState = bind(this._changePolyState, this);
       };
       LineView.prototype.render = function (seriesModel, ecModel, api) {
-        var _this = this;
         var coordSys = seriesModel.coordinateSystem;
         var group = this.group;
         var data = seriesModel.getData();
@@ -39431,9 +39445,7 @@
           getECData(polygon).seriesIndex = seriesModel.seriesIndex;
           toggleHoverEmphasis(polygon, focus, blurScope, emphasisDisabled);
         }
-        var changePolyState = function (toState) {
-          _this._changePolyState(toState);
-        };
+        var changePolyState = this._changePolyState;
         data.eachItemGraphicEl(function (el) {
           // Switch polyline / polygon state if element changed its state.
           el && (el.onHoverStateChange = changePolyState);
@@ -41603,7 +41615,7 @@
           var rA = r + item.len;
           var rA2 = rA * rA;
           // Use ellipse implicit function to calculate x
-          var dx = Math.sqrt((1 - Math.abs(dy * dy / rB2)) * rA2);
+          var dx = Math.sqrt(Math.abs((1 - dy * dy / rB2) * rA2));
           var newX = cx + (dx + item.len2) * dir;
           var deltaX = newX - item.label.x;
           var newTargetWidth = item.targetTextWidth - deltaX * dir;
@@ -43063,6 +43075,8 @@
       },
       splitLine: {
         show: true,
+        showMinLine: true,
+        showMaxLine: true,
         lineStyle: {
           color: ['#E0E6F1'],
           width: 1,
@@ -45051,6 +45065,8 @@
         var splitLineModel = axisModel.getModel('splitLine');
         var lineStyleModel = splitLineModel.getModel('lineStyle');
         var lineColors = lineStyleModel.get('color');
+        var showMinLine = splitLineModel.get('showMinLine') !== false;
+        var showMaxLine = splitLineModel.get('showMaxLine') !== false;
         lineColors = isArray(lineColors) ? lineColors : [lineColors];
         var gridRect = gridModel.coordinateSystem.getRect();
         var isHorizontal = axis.isHorizontal();
@@ -45063,6 +45079,10 @@
         var lineStyle = lineStyleModel.getLineStyle();
         for (var i = 0; i < ticksCoords.length; i++) {
           var tickCoord = axis.toGlobalCoord(ticksCoords[i].coord);
+          if (i === 0 && !showMinLine || i === ticksCoords.length - 1 && !showMaxLine) {
+            continue;
+          }
+          var tickValue = ticksCoords[i].tickValue;
           if (isHorizontal) {
             p1[0] = tickCoord;
             p1[1] = gridRect.y;
@@ -45075,9 +45095,8 @@
             p2[1] = tickCoord;
           }
           var colorIndex = lineCount++ % lineColors.length;
-          var tickValue = ticksCoords[i].tickValue;
           var line = new Line({
-            anid: tickValue != null ? 'line_' + ticksCoords[i].tickValue : null,
+            anid: tickValue != null ? 'line_' + tickValue : null,
             autoBatch: true,
             shape: {
               x1: p1[0],
@@ -51103,10 +51122,23 @@
         if (layout === 'radial') {
           kx_1 = width / (right_1.getLayout().x + delta + tx_1);
           // here we use (node.depth - 1), bucause the real root's depth is 1
-          ky_1 = height / (bottom_1.depth - 1 || 1);
+          // ky = height / ((bottom.depth - 1) || 1);
+          ky_1 = 100;
           eachBefore(realRoot, function (node) {
             coorX_1 = (node.getLayout().x + tx_1) * kx_1;
-            coorY_1 = (node.depth - 1) * ky_1;
+            // coorY = (node.depth - 1) * ky;
+            if (node.depth === 1) {
+              coorY_1 = 0;
+            }
+            if (node.depth === 2) {
+              coorY_1 = 130;
+            }
+            if (node.depth === 3) {
+              coorY_1 = 260;
+            }
+            if (node.depth > 3) {
+              coorY_1 = 260 + 60 * (node.depth - 2);
+            }
             var finalCoor = radialCoordinate(coorX_1, coorY_1);
             node.setLayout({
               x: finalCoor.x,
@@ -52422,6 +52454,8 @@
         setAsHighDownDispatcher(group, !isDisabled);
         // Only for enabling highlight/downplay.
         data.setItemGraphicEl(thisNode.dataIndex, group);
+        var cursorStyle = nodeModel.getShallow('cursor');
+        cursorStyle && content.attr('cursor', cursorStyle);
         enableHoverFocus(group, focusOrIndices, blurScope);
       }
       return group;
@@ -56500,7 +56534,7 @@
               r: r
             }
           });
-          isOverlap && (progress.z2 = maxVal - data.get(valueDim, idx) % maxVal);
+          isOverlap && (progress.z2 = linearMap(data.get(valueDim, idx), [minVal, maxVal], [100, 0], true));
           return progress;
         }
         if (showProgress || showPointer) {
@@ -59735,9 +59769,9 @@
        * Init a graph data structure from data in option series
        */
       SankeySeriesModel.prototype.getInitialData = function (option, ecModel) {
-        var links = option.edges || option.links;
-        var nodes = option.data || option.nodes;
-        var levels = option.levels;
+        var links = option.edges || option.links || [];
+        var nodes = option.data || option.nodes || [];
+        var levels = option.levels || [];
         this.levelModels = [];
         var levelModels = this.levelModels;
         for (var i = 0; i < levels.length; i++) {
@@ -59749,10 +59783,8 @@
             }
           }
         }
-        if (nodes && links) {
-          var graph = createGraphFromNodeEdge(nodes, links, this, true, beforeLink);
-          return graph.data;
-        }
+        var graph = createGraphFromNodeEdge(nodes, links, this, true, beforeLink);
+        return graph.data;
         function beforeLink(nodeData, edgeData) {
           nodeData.wrapMethod('getItemModel', function (model, idx) {
             var seriesModel = model.parentModel;
@@ -60407,6 +60439,16 @@
     var WhiskerBoxCommonMixin = /** @class */function () {
       function WhiskerBoxCommonMixin() {}
       /**
+       * @private
+       */
+      WhiskerBoxCommonMixin.prototype._hasEncodeRule = function (key) {
+        var encodeRules = this.getEncode();
+        if (encodeRules && encodeRules.data && encodeRules.data.has(key)) {
+          return encodeRules.data.get(key) != null;
+        }
+        return false;
+      };
+      /**
        * @override
        */
       WhiskerBoxCommonMixin.prototype.getInitialData = function (option, ecModel) {
@@ -60424,11 +60466,11 @@
         if (xAxisType === 'category') {
           option.layout = 'horizontal';
           ordinalMeta = xAxisModel.getOrdinalMeta();
-          addOrdinal = true;
+          addOrdinal = !this._hasEncodeRule('x');
         } else if (yAxisType === 'category') {
           option.layout = 'vertical';
           ordinalMeta = yAxisModel.getOrdinalMeta();
-          addOrdinal = true;
+          addOrdinal = !this._hasEncodeRule('y');
         } else {
           option.layout = option.layout || 'horizontal';
         }
@@ -60894,6 +60936,45 @@
       registers.registerTransform(boxplotTransform);
     }
 
+    var positiveBorderColorQuery = ['itemStyle', 'borderColor'];
+    var negativeBorderColorQuery = ['itemStyle', 'borderColor0'];
+    var dojiBorderColorQuery = ['itemStyle', 'borderColorDoji'];
+    var positiveColorQuery = ['itemStyle', 'color'];
+    var negativeColorQuery = ['itemStyle', 'color0'];
+    function getColor(sign, model) {
+      return model.get(sign > 0 ? positiveColorQuery : negativeColorQuery);
+    }
+    function getBorderColor(sign, model) {
+      return model.get(sign === 0 ? dojiBorderColorQuery : sign > 0 ? positiveBorderColorQuery : negativeBorderColorQuery);
+    }
+    var candlestickVisual = {
+      seriesType: 'candlestick',
+      plan: createRenderPlanner(),
+      // For legend.
+      performRawSeries: true,
+      reset: function (seriesModel, ecModel) {
+        // Only visible series has each data be visual encoded
+        if (ecModel.isSeriesFiltered(seriesModel)) {
+          return;
+        }
+        var isLargeRender = seriesModel.pipelineContext.large;
+        return !isLargeRender && {
+          progress: function (params, data) {
+            var dataIndex;
+            while ((dataIndex = params.next()) != null) {
+              var itemModel = data.getItemModel(dataIndex);
+              var sign = data.getItemLayout(dataIndex).sign;
+              var style = itemModel.getItemStyle();
+              style.fill = getColor(sign, itemModel);
+              style.stroke = getBorderColor(sign, itemModel) || style.fill;
+              var existsStyle = data.ensureUniqueItemVisual(dataIndex, 'style');
+              extend(existsStyle, style);
+            }
+          }
+        };
+      }
+    };
+
     var SKIP_PROPS = ['color', 'borderColor'];
     var CandlestickView = /** @class */function (_super) {
       __extends(CandlestickView, _super);
@@ -61083,6 +61164,17 @@
       el.style.strokeNoScale = true;
       el.__simpleBox = isSimpleBox;
       setStatesStylesFromModel(el, itemModel);
+      var sign = data.getItemLayout(dataIndex).sign;
+      each(el.states, function (state, stateName) {
+        var stateModel = itemModel.getModel(stateName);
+        var color = getColor(sign, stateModel);
+        var borderColor = getBorderColor(sign, stateModel) || color;
+        var stateStyle = state.style || (state.style = {});
+        color && (stateStyle.fill = color);
+        borderColor && (stateStyle.stroke = borderColor);
+      });
+      var emphasisModel = itemModel.getModel('emphasis');
+      toggleHoverEmphasis(el, emphasisModel.get('focus'), emphasisModel.get('blurScope'), emphasisModel.get('disabled'));
     }
     function transInit$1(points, itemLayout) {
       return map(points, function (point) {
@@ -61161,12 +61253,9 @@
     }
     function setLargeStyle(sign, el, seriesModel, data) {
       // TODO put in visual?
-      var borderColor = seriesModel.get(['itemStyle', sign > 0 ? 'borderColor' : 'borderColor0'])
+      var borderColor = getBorderColor(sign, seriesModel)
       // Use color for border color by default.
-      || seriesModel.get(['itemStyle', sign > 0 ? 'color' : 'color0']);
-      if (sign === 0) {
-        borderColor = seriesModel.get(['itemStyle', 'borderColorDoji']);
-      }
+      || getColor(sign, seriesModel);
       // Color must be excluded.
       // Because symbol provide setColor individually to set fill and stroke
       var itemStyle = seriesModel.getModel('itemStyle').getItemStyle(SKIP_PROPS);
@@ -61228,7 +61317,6 @@
           borderWidth: 1
         },
         emphasis: {
-          scale: true,
           itemStyle: {
             borderWidth: 2
           }
@@ -61259,45 +61347,6 @@
         }
       });
     }
-
-    var positiveBorderColorQuery = ['itemStyle', 'borderColor'];
-    var negativeBorderColorQuery = ['itemStyle', 'borderColor0'];
-    var dojiBorderColorQuery = ['itemStyle', 'borderColorDoji'];
-    var positiveColorQuery = ['itemStyle', 'color'];
-    var negativeColorQuery = ['itemStyle', 'color0'];
-    var candlestickVisual = {
-      seriesType: 'candlestick',
-      plan: createRenderPlanner(),
-      // For legend.
-      performRawSeries: true,
-      reset: function (seriesModel, ecModel) {
-        function getColor(sign, model) {
-          return model.get(sign > 0 ? positiveColorQuery : negativeColorQuery);
-        }
-        function getBorderColor(sign, model) {
-          return model.get(sign === 0 ? dojiBorderColorQuery : sign > 0 ? positiveBorderColorQuery : negativeBorderColorQuery);
-        }
-        // Only visible series has each data be visual encoded
-        if (ecModel.isSeriesFiltered(seriesModel)) {
-          return;
-        }
-        var isLargeRender = seriesModel.pipelineContext.large;
-        return !isLargeRender && {
-          progress: function (params, data) {
-            var dataIndex;
-            while ((dataIndex = params.next()) != null) {
-              var itemModel = data.getItemModel(dataIndex);
-              var sign = data.getItemLayout(dataIndex).sign;
-              var style = itemModel.getItemStyle();
-              style.fill = getColor(sign, itemModel);
-              style.stroke = getBorderColor(sign, itemModel) || style.fill;
-              var existsStyle = data.ensureUniqueItemVisual(dataIndex, 'style');
-              extend(existsStyle, style);
-            }
-          }
-        };
-      }
-    };
 
     var candlestickLayout = {
       seriesType: 'candlestick',
@@ -63406,7 +63455,7 @@
       }
       // if 'pxSign' means sign of pixel,  it can't be zero, or symbolScale will be zero
       // and when borderWidth be settled, the actual linewidth will be NaN
-      outputSymbolMeta.pxSign = boundingLength > 0 ? 1 : -1;
+      outputSymbolMeta.pxSign = boundingLength >= 0 ? 1 : -1;
     }
     function convertToCoordOnAxis(axis, value) {
       return axis.toGlobalCoord(axis.dataToCoord(axis.scale.parse(value)));
@@ -64413,7 +64462,7 @@
         this._seriesModel = seriesModel || this._seriesModel;
         this._ecModel = ecModel || this._ecModel;
         var focus = emphasisModel.get('focus');
-        var focusOrIndices = focus === 'ancestor' ? node.getAncestorsIndices() : focus === 'descendant' ? node.getDescendantIndices() : focus;
+        var focusOrIndices = focus === 'relative' ? concatArray(node.getAncestorsIndices(), node.getDescendantIndices()) : focus === 'ancestor' ? node.getAncestorsIndices() : focus === 'descendant' ? node.getDescendantIndices() : focus;
         toggleHoverEmphasis(this, focusOrIndices, emphasisModel.get('blurScope'), emphasisModel.get('disabled'));
       };
       SunburstPiece.prototype._updateLabel = function (seriesModel) {
@@ -68511,6 +68560,7 @@
         radiusExtent[0] > radiusExtent[1] && radiusExtent.reverse();
         var angleExtent = angleAxis.getExtent();
         var RADIAN = Math.PI / 180;
+        var EPSILON = 1e-4;
         return {
           cx: this.cx,
           cy: this.cy,
@@ -68524,11 +68574,12 @@
             // Start angle and end angle don't matter
             var dx = x - this.cx;
             var dy = y - this.cy;
-            // minus a tiny value 1e-4 to avoid being clipped unexpectedly
-            var d2 = dx * dx + dy * dy - 1e-4;
+            var d2 = dx * dx + dy * dy;
             var r = this.r;
             var r0 = this.r0;
-            return d2 <= r * r && d2 >= r0 * r0;
+            // minus a tiny value 1e-4 in double side to avoid being clipped unexpectedly
+            // r == r0 contain nothing
+            return r !== r0 && d2 - EPSILON <= r * r && d2 + EPSILON >= r0 * r0;
           }
         };
       };
@@ -74190,9 +74241,12 @@
       };
       TooltipHTMLContent.prototype.getSize = function () {
         var el = this.el;
-        return [el.offsetWidth, el.offsetHeight];
+        return el ? [el.offsetWidth, el.offsetHeight] : [0, 0];
       };
       TooltipHTMLContent.prototype.moveTo = function (zrX, zrY) {
+        if (!this.el) {
+          return;
+        }
         var styleCoord = this._styleCoord;
         makeStyleCoord(styleCoord, this._zr, this._container, zrX, zrY);
         if (styleCoord[0] != null && styleCoord[1] != null) {
@@ -78839,7 +78893,8 @@
             },
             onclick: function () {
               api.dispatchAction({
-                type: type === 'all' ? 'legendAllSelect' : 'legendInverseSelect'
+                type: type === 'all' ? 'legendAllSelect' : 'legendInverseSelect',
+                legendId: legendModel.id
               });
             }
           });
@@ -79183,46 +79238,60 @@
     }
 
     function legendSelectActionHandler(methodName, payload, ecModel) {
+      var isAllSelect = methodName === 'allSelect' || methodName === 'inverseSelect';
       var selectedMap = {};
-      var isToggleSelect = methodName === 'toggleSelected';
-      var isSelected;
-      // Update all legend components
+      var actionLegendIndices = [];
+      ecModel.eachComponent({
+        mainType: 'legend',
+        query: payload
+      }, function (legendModel) {
+        if (isAllSelect) {
+          legendModel[methodName]();
+        } else {
+          legendModel[methodName](payload.name);
+        }
+        makeSelectedMap(legendModel, selectedMap);
+        actionLegendIndices.push(legendModel.componentIndex);
+      });
+      var allSelectedMap = {};
+      // make selectedMap from all legend components
       ecModel.eachComponent('legend', function (legendModel) {
-        if (isToggleSelect && isSelected != null) {
+        each(selectedMap, function (isSelected, name) {
           // Force other legend has same selected status
           // Or the first is toggled to true and other are toggled to false
           // In the case one legend has some item unSelected in option. And if other legend
           // doesn't has the item, they will assume it is selected.
-          legendModel[isSelected ? 'select' : 'unSelect'](payload.name);
-        } else if (methodName === 'allSelect' || methodName === 'inverseSelect') {
-          legendModel[methodName]();
-        } else {
-          legendModel[methodName](payload.name);
-          isSelected = legendModel.isSelected(payload.name);
-        }
-        var legendData = legendModel.getData();
-        each(legendData, function (model) {
-          var name = model.get('name');
-          // Wrap element
-          if (name === '\n' || name === '') {
-            return;
-          }
-          var isItemSelected = legendModel.isSelected(name);
-          if (selectedMap.hasOwnProperty(name)) {
-            // Unselected if any legend is unselected
-            selectedMap[name] = selectedMap[name] && isItemSelected;
-          } else {
-            selectedMap[name] = isItemSelected;
-          }
+          legendModel[isSelected ? 'select' : 'unSelect'](name);
         });
+        makeSelectedMap(legendModel, allSelectedMap);
       });
       // Return the event explicitly
-      return methodName === 'allSelect' || methodName === 'inverseSelect' ? {
-        selected: selectedMap
+      return isAllSelect ? {
+        selected: allSelectedMap,
+        // return legendIndex array to tell the developers which legends are allSelect / inverseSelect
+        legendIndex: actionLegendIndices
       } : {
         name: payload.name,
-        selected: selectedMap
+        selected: allSelectedMap
       };
+    }
+    function makeSelectedMap(legendModel, out) {
+      var selectedMap = out || {};
+      each(legendModel.getData(), function (model) {
+        var name = model.get('name');
+        // Wrap element
+        if (name === '\n' || name === '') {
+          return;
+        }
+        var isItemSelected = legendModel.isSelected(name);
+        if (hasOwn(selectedMap, name)) {
+          // Unselected if any legend is unselected
+          selectedMap[name] = selectedMap[name] && isItemSelected;
+        } else {
+          selectedMap[name] = isItemSelected;
+        }
+      });
+      return selectedMap;
     }
     function installLegendAction(registers) {
       /**
@@ -82073,6 +82142,7 @@
         var handleLabels = shapes.handleLabels;
         var itemSize = visualMapModel.itemSize;
         var dataExtent = visualMapModel.getExtent();
+        var align = this._applyTransform('left', shapes.mainGroup);
         each$e([0, 1], function (handleIndex) {
           var handleThumb = handleThumbs[handleIndex];
           handleThumb.setStyle('fill', visualInRange.handlesColor[handleIndex]);
@@ -82083,6 +82153,12 @@
           handleThumb.x = itemSize[0] - symbolSize / 2;
           // Update handle label position.
           var textPoint = applyTransform$1(shapes.handleLabelPoints[handleIndex], getTransform(handleThumb, this.group));
+          if (this._orient === 'horizontal') {
+            // If visualMap controls symbol size, an additional offset needs to be added to labels to avoid collision at minimum size.
+            // Offset reaches value of 0 at "maximum" position, so maximum position is not altered at all.
+            var minimumOffset = align === 'left' || align === 'top' ? (itemSize[0] - symbolSize) / 2 : (itemSize[0] - symbolSize) / -2;
+            textPoint[1] += minimumOffset;
+          }
           handleLabels[handleIndex].setStyle({
             x: textPoint[0],
             y: textPoint[1],
@@ -83168,6 +83244,7 @@
         if (!labelModel.get('enabled')) {
           return;
         }
+        dom.setAttribute('role', 'img');
         if (labelModel.get('description')) {
           dom.setAttribute('aria-label', labelModel.get('description'));
           return;
@@ -83218,11 +83295,14 @@
               }
               var middleSeparator_1 = labelModel.get(['data', 'separator', 'middle']);
               var endSeparator_1 = labelModel.get(['data', 'separator', 'end']);
+              var excludeDimensionId_1 = labelModel.get(['data', 'excludeDimensionId']);
               var dataLabels = [];
               for (var i = 0; i < data.count(); i++) {
                 if (i < maxDataCnt) {
                   var name_1 = data.getName(i);
-                  var value = data.getValues(i);
+                  var value = !excludeDimensionId_1 ? data.getValues(i) : filter(data.getValues(i), function (v, j) {
+                    return indexOf(excludeDimensionId_1, j) === -1;
+                  });
                   var dataLabel = labelModel.get(['data', name_1 ? 'withName' : 'withoutName']);
                   dataLabels.push(replace(dataLabel, {
                     name: name_1,
